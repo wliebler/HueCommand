@@ -1,4 +1,4 @@
-### HueCommand
+# HueCommand
 A program to control Hue Lights via the command line
 
 Created as a project for myself to practice using C and curl.
@@ -33,11 +33,11 @@ Commands have the following layout
 hueCommand <command> <sub-command> [flags]
 Below are the commands and their subcommands
 
-# init-config
+### init-config
 Performs the inital configuration
 See [Setup](##Setup)
 
-# l (lights)
+### l (lights)
 All commands relating to lights are under the command _l_
 Example usage
 ```
@@ -51,7 +51,7 @@ There are currently two subcommands
 
 When using the s sub-command a target needs to be provided with the -t flag so that the targeted light can be set
 
-## Flags
+### Flags
  * -t   (Sets the target of a command)
  * -b   (Sets the targets brightness)
  * on   (Turns the target on)
