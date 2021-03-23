@@ -34,13 +34,17 @@ hueCommand <command> <sub-command> [flags]
 Below are the commands and their subcommands
 
 ### Initial Configuration
-_init-config_
+```init-config```
+
 Performs the inital configuration
+
 See [Setup](#Setup)
 
 ### Lights
-_l_
+```l```
+
 All commands relating to lights are under the command
+
 Example usage
 ```
 hueCommand l <sub-command> [options]
