@@ -101,8 +101,11 @@ int parseArgs(int argc, char *argv[],struct arguments* argStorage)
                 }
         }
         else if(!strcmp(argv[i], "-b")){
-            int j = intFromArgument(argc,argv,i,&argStorage->target);
+            int j = intFromArgument(argc,argv,i,&argStorage->optionB);
             if(j == 0){
+                if(argStorage->optionB){
+                    printf("Target optionB int is set to %d\n",argStorage->optionB);
+                }
                 i += 2;
             }
             else if(j == 1){
