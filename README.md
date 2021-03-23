@@ -33,15 +33,17 @@ Commands have the following layout
 hueCommand <command> <sub-command> [flags]
 Below are the commands and their subcommands
 
-### init-config
+### Initial Configuration
+_init-config_
 Performs the inital configuration
-See [Setup](##Setup)
+See [Setup](#Setup)
 
-### l (lights)
-All commands relating to lights are under the command _l_
+### Lights
+_l_
+All commands relating to lights are under the command
 Example usage
 ```
-hueCommand l <sub-command> [flags]
+hueCommand l <sub-command> [options]
 ```
 Not providing a sub-command will have the help for the light be printed
 
@@ -51,8 +53,9 @@ There are currently two subcommands
 
 When using the s sub-command a target needs to be provided with the -t flag so that the targeted light can be set
 
-### Flags
+### Options
  * -t   (Sets the target of a command)
  * -b   (Sets the targets brightness)
+ * -v   (Enables verbose logging and printing of debug information)
  * on   (Turns the target on)
  * off   (Turns the target off)
