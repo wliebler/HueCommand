@@ -1,29 +1,69 @@
 #include "cJSON/cJSON.h"
+#include <asm-generic/errno-base.h>
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <stdio.h>
 #include "hueCommand.h"
 #include "requestHandler.h"
+#include <limits.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <dirent.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #define responseBufferSize 10
 #define maxLightName 20
 char ipAddress[50];
 char authToken[256];
-//Whether to print debug information
-int arg_debugMode = 0;
-//Whether to print help information
-int arg_printHelpArg = 0;
-//The target integer for any commands
-char arg_targetint[4];
-//Index of the char* for the json input if given
-int arg_jSONIndex = -1;
-int parseArgs(int argc, char *argv[])
+
+/*
+ * Sets the values in the arguments struct to their default values
+ */
+int setDefaultArguments(struct arguments* args){
+    args->debugMode = 0;
+    args->printHelp = 0;
+    args->target = -1;
+    args->optionB = -1;
+    args->argOnOff = -1;
+
+    return 0;
+
+
+}
+
+//Returns 0 if successful, 1 otherwise
+int stringToInt(char* s, int* i){
+    char* end;
+    int returnval = 0;
+    long val = strtol(s,&end,10);
+    if(val >= INT_MAX || val <= INT_MIN){
+        val = 0;
+        returnval = 1;
+    }
+    *i = (int)val;
+    return returnval;
+}
+
+//0 is success
+//1 is failed to convert string to int
+//2 is not enough arguments
+int intFromArgument(int argc, char* argv[], int startingArg, int* storage){
+    if(argc > startingArg + 1){
+        int succesVal = stringToInt(argv[startingArg+1],storage);
+        return succesVal; 
+    } 
+    //Not enought args
+    return 2;
+}
+int parseArgs(int argc, char *argv[],struct arguments* argStorage)
 {
+    setDefaultArguments(argStorage);
+    //First setting all args to default values
     //Parsing extra arguments
     for (int i = 1; i < argc;)
     {
@@ -31,44 +71,56 @@ int parseArgs(int argc, char *argv[])
         if (!strcmp(argv[i], "-v"))
         {
             //Verbose, prints debug information
-            arg_debugMode = 1;
+            argStorage->debugMode = 1;
+            printf("Debug mode enabled\n");
+            //arg_debugMode = 1;
             i++;
         }
         else if (!strcmp(argv[i], "-h"))
         {
-            arg_printHelpArg = 1;
+            argStorage->printHelp = 1;
+            //arg_printHelpArg = 1;
             i++;
         }
         else if (!strcmp(argv[i], "-t"))
         {
-            //Making sure there is a next arg
-            if (argc > i + 1)
-            {
-                if (strlen(argv[i + 1]) < 4)
-                {
-                    strcpy(arg_targetint, argv[i + 1]);
+            int j = intFromArgument(argc,argv,i,&argStorage->target);
+                if(j == 0){
+                    if(argStorage->debugMode){
+                        printf("Target int set to %d\n",argStorage->target);
+                    }
                     i += 2;
                 }
+                else if( j == 1){
+                    printf("Issue parsing targeted value!\n");
+                    i += 2;
+                }
+                else if(j == 2){
+                    printf("Not enough arguments for -t argument!\n");
+                    i += 1;
+                }
+        }
+        else if(!strcmp(argv[i], "-b")){
+            int j = intFromArgument(argc,argv,i,&argStorage->target);
+            if(j == 0){
                 i += 2;
             }
-            else
-            {
-                printf("\nNot enough arguments for -t argument!\n");
-                i++;
+            else if(j == 1){
+                i += 2;
+                printf("Issue parsing targeted value!\n");
+            }
+            else if(j == 2){
+                printf("Not enough arguments for -b argument!\n");
+                i +=1;
             }
         }
-        else if (!strcmp(argv[i], "-j"))
-        {
-            if (argc > i + 1)
-            {
-                arg_jSONIndex = i + 1;
-                i += 2;
-            }
-            else
-            {
-                printf("\nNot enough arguments for -j argument!\n");
-                i += 2;
-            }
+        else if(!strcmp(argv[i],"off")){
+            argStorage->argOnOff = 0;
+            i++;
+        }
+        else if(!strcmp(argv[i],"on")){
+            argStorage->argOnOff = 1;
+            i++;
         }
         else
         {
@@ -134,85 +186,41 @@ int lights_printCommands()
     return 0;
 }
 
-int setLightState(int argc, char *argv[])
+int setLightState(struct arguments* args)
 {
     cJSON *body;
     //First grab arguments
-    int arg_onoff = -1;     //0 is off, 1 is on
-    int brightnessSet = -1; //-1 is not provided
-    for (int i = 1; i < argc;)
-    {
-        if (!strcmp(argv[i], "on"))
-        {
-            arg_onoff = 1;
-            i++;
-        }
-        else if (!strcmp(argv[i], "off"))
-        {
-            arg_onoff = 0;
-            i++;
-        }
-        else if (!strcmp(argv[i], "-b"))
-        {
-            i++;
-            if (i < argc)
-            {
-                brightnessSet = atoi(argv[i]);
-                i++;
-            }
-            else
-            {
-                printf("\n Not enough arguments to set brightness");
-            }
-        }
-        else
-        {
-            //No args
-            i++;
-        }
-    }
     //Now creating our json object
     //First we check if we have been given a json object via the -j argument
-    if (arg_jSONIndex != -1)
-    {
-        //JSON argument given, need to make sure it is valid
-        body = cJSON_Parse(argv[arg_jSONIndex]);
-        if (body == NULL)
-        {
-            printf("\nError parsing passed jSON! Ignoring it");
-            body = cJSON_CreateObject();
-        }
-    }
-    else
-    {
-        //No json argument given
-        body = cJSON_CreateObject();
-    }
+    body = cJSON_CreateObject();
     //If setting the light on or off
     cJSON *newLightState;
-    switch (arg_onoff)
+    switch (args->argOnOff)
     {
-    case 0:
-        newLightState = cJSON_CreateBool(false);
-        cJSON_AddItemToObject(body, "on", newLightState);
-        break;
-    case 1:
-        newLightState = cJSON_CreateBool(true);
-        cJSON_AddItemToObject(body, "on", newLightState);
-        break;
-    default:
-        break;
+        case 0:
+            newLightState = cJSON_CreateBool(false);
+            cJSON_AddItemToObject(body, "on", newLightState);
+            break;
+        case 1:
+            newLightState = cJSON_CreateBool(true);
+            cJSON_AddItemToObject(body, "on", newLightState);
+            break;
+        default:
+            break;
     }
-    if (brightnessSet >= 0)
+    if (args->optionB >= 0)
     {
-        cJSON_AddItemToObject(body, "bri", cJSON_CreateNumber(brightnessSet));
+        cJSON_AddItemToObject(body, "bri", cJSON_CreateNumber(args->optionB));
     }
     char address[50];
+    int targetLength = snprintf(NULL,0,"%d",args->target);
+    char* addressTarget = malloc(targetLength +1);
+    snprintf(addressTarget,targetLength+1,"%d",args->target);
     strcpy(address, "lights/");
-    strcat(address, arg_targetint);
+    strcat(address, addressTarget);
     strcat(address, "/state");
     messageSender("PUT", "Content-Type: application/json", cJSON_Print(body), address);
-    if (arg_debugMode)
+    if (args->debugMode)
     {
         printf("\nResponse from sending request to set state");
         printf("\n%s\n", requestHandler_response);
@@ -222,7 +230,7 @@ int setLightState(int argc, char *argv[])
 //All args used for the light go here
 //Used for priting out all the lights in the standard version
 //Style is what syle we will print the details out in
-int printListLightInfo(char *lightNum, cJSON *light, int style)
+int printListLightInfo(char *lightNum, cJSON *light, int style,struct arguments* args)
 {
     //Limit to displaying the first 30 charcaters
     char lightName[maxLightName + 1];
@@ -230,14 +238,14 @@ int printListLightInfo(char *lightNum, cJSON *light, int style)
     cJSON *jsonLightName = cJSON_GetObjectItem(light, "name");
     if (jsonLightName == NULL)
     {
-        if (arg_debugMode)
+        if (args->debugMode)
         {
             printf("DEBUG: Light is missing name!\n");
         }
     }
     else
     {
-        if (arg_debugMode)
+        if (args->debugMode)
         {
             printf("DEBUG: FULL LIGHT NAME IS %s\n", jsonLightName->valuestring);
         }
@@ -309,7 +317,7 @@ int printListLightInfo(char *lightNum, cJSON *light, int style)
         }
         else
         {
-            if (arg_debugMode)
+            if (args->debugMode)
             {
                 printf("DEBUG issue getting brightness of light");
             }
@@ -333,7 +341,7 @@ int printListLightInfo(char *lightNum, cJSON *light, int style)
 
     else
     {
-        if (arg_debugMode)
+        if (args->debugMode)
         {
             printf("DEBUG: Issue getting state of light\n");
         }
@@ -342,16 +350,16 @@ int printListLightInfo(char *lightNum, cJSON *light, int style)
     //Doing the no args version first
     switch (style)
     {
-    case 0:
+        case 0:
 
-        printf("%s | %s | %s | %s |   %s   |\n", numDisplay, lightName, lightState, brightnessDisplay, reachableDisplay);
-        break;
+            printf("%s | %s | %s | %s |   %s   |\n", numDisplay, lightName, lightState, brightnessDisplay, reachableDisplay);
+            break;
     }
     return 0;
 }
 //Prints out the list of lights
 //The style represents what style this will be printed in. 0 is default
-int lights_list(int argc, char *argv[], int style)
+int lights_list(int style,struct arguments* args)
 {
     messageSender("GET", "Content-Type: application/json", "", "lights");
     printf("\nLights\n");
@@ -364,28 +372,28 @@ int lights_list(int argc, char *argv[], int style)
     //So the parse was good
     switch (style)
     {
-    case 0:
-        printf(" ID  | Light Name           |State| Bri |Reachable|\n");
-        printf("-------------------------------------------------------\n");
-        break;
-    default:
-        printf("\n Error with lising lights!");
-        if (arg_debugMode)
-        {
-            printf("\n Received %d as the style for printing the lights, which is not supported\n", style);
-        }
-        return -1;
-        break;
+        case 0:
+            printf(" ID  | Light Name           |State| Bri |Reachable|\n");
+            printf("-------------------------------------------------------\n");
+            break;
+        default:
+            printf("\n Error with lising lights!");
+            if (args->debugMode)
+            {
+                printf("\n Received %d as the style for printing the lights, which is not supported\n", style);
+            }
+            return -1;
+            break;
     }
     if (parsedResponse->child != NULL)
     {
         //Grab the child JSON object
         cJSON *currentNode = parsedResponse->child;
-        printListLightInfo(currentNode->string, currentNode, style);
+        printListLightInfo(currentNode->string, currentNode, style,args);
         while (currentNode->next != NULL)
         {
             currentNode = currentNode->next;
-            printListLightInfo(currentNode->string, currentNode, style);
+            printListLightInfo(currentNode->string, currentNode, style,args);
         }
     }
     else
@@ -394,9 +402,9 @@ int lights_list(int argc, char *argv[], int style)
     }
     return 0;
 }
-int lights_Commands(int argc, char *argv[])
+int lights_Commands(int argc, char *argv[],struct arguments* args)
 {
-    if (argc <= 2 || arg_printHelpArg)
+    if (argc <= 2 || args->printHelp)
     {
         lights_printCommands();
     }
@@ -404,11 +412,11 @@ int lights_Commands(int argc, char *argv[])
     {
         if (!strcmp(argv[2], "l"))
         {
-            lights_list(argc, argv, 0);
+            lights_list(0,args);
         }
         else if (!strcmp(argv[2], "s"))
         {
-            setLightState(argc, argv);
+            setLightState(args);
         }
         else
         {
@@ -434,18 +442,19 @@ int printHelp()
 
 int main(int argc, char *argv[])
 {
-    parseArgs(argc, argv);
+    struct arguments args;
+    parseArgs(argc, argv,&args);
     curl_global_init(CURL_GLOBAL_ALL);
     if (argc >= 2 && (!strcmp(argv[1], "init-config")))
     {
-        if (arg_printHelpArg == 1)
+        if (args.printHelp)
         {
             printf("\n| Obtains an auth-token from the Hue Bridge to allow for requests to be authorised\n| Required for commands to function correctly\n");
             return 0;
         }
         else
         {
-            initialConfig();
+            initialConfig(&args);
             return 0;
         }
     }
@@ -463,7 +472,7 @@ int main(int argc, char *argv[])
             if (!strcmp(argv[1], "l"))
             {
                 //Performing a light command
-                lights_Commands(argc, argv);
+                lights_Commands(argc, argv,&args);
             }
             else
             {
@@ -504,14 +513,14 @@ int loadConfigInformation(char *ip, char *aToken)
     return 0;
 }
 
-int obtainAuthToken(char *ip, char *tokenStorage)
+int obtainAuthToken(char *ip, char *tokenStorage,struct arguments* args)
 {
     printf("Obtaining new auth token\n");
     //Constructing JSON format
     cJSON *body = cJSON_CreateObject();
     cJSON *bodyValue = cJSON_CreateString("hueCommand#user");
     cJSON_AddItemToObject(body, "devicetype", bodyValue);
-    if (arg_debugMode)
+    if (args->debugMode)
     {
         printf("JSON printing: \n %s", cJSON_Print(body));
         fflush(stdout);
@@ -528,7 +537,7 @@ int obtainAuthToken(char *ip, char *tokenStorage)
         if (authRequest)
         {
 
-            if (arg_debugMode)
+            if (args->debugMode)
             {
                 printf("Ip address to send request to is: %s\n", sendIp);
             }
@@ -541,7 +550,7 @@ int obtainAuthToken(char *ip, char *tokenStorage)
             finishRequest();
             curl_easy_cleanup(authRequest);
             curl_slist_free_all(headers);
-            if (arg_debugMode)
+            if (args->debugMode)
             {
                 printf("Finished with input");
                 fflush(stdout);
@@ -606,13 +615,18 @@ int obtainAuthToken(char *ip, char *tokenStorage)
     return 0;
 }
 
-int initialConfig()
+int initialConfig(struct arguments* args)
 {
     //Initial configuration
     //Config file location
     printf("\n ========== \nBeginning inital configuration\n");
     char *configFileLocation = getenv("HOME");
+
+    char configFolderLocation[1000];
+    strcpy(configFolderLocation,configFileLocation);
     strcat(configFileLocation, configPath);
+    strcat(configFolderLocation,configFolderPath);
+    printf("%s\n%s\n",configFileLocation,configFolderLocation);
     printf("Checking for existing configuration file :");
     if (!access(configFileLocation, R_OK))
     {
@@ -632,29 +646,50 @@ int initialConfig()
             printf("Stopping initial configuration!\n");
             return -1;
         }
-    }
-    printf("Deleting old config file :");
+        printf("Deleting old config file :");
 
-    int deleteSuccessful = remove(configFileLocation);
-    if (deleteSuccessful == 0)
-    {
-        printf("Successful! \n");
+        int deleteSuccessful = remove(configFileLocation);
+        if (deleteSuccessful == 0)
+        {
+            printf("Successful! \n");
+        }
+        else
+        {
+            perror("Error: ");
+            printf("\n");
+        }
     }
-    else
-    {
-        perror("Error: ");
-        printf("\n");
+    else{
+        printf(" Not found!\n");
     }
     printf("Creating new config file\n");
     //Creating a new config file
+    DIR *configDir = opendir(configFolderLocation);
+    //Checking if we already have a folder
+    if(!configDir && ENOENT == errno){
+        //Folder doesnt exist so we need to create it
+        int folderCreatedCheck = mkdir(configFolderLocation,0700);
+        if(folderCreatedCheck){
+            printf("Error creating folder for storage!\n");
+            if(args->debugMode){
+                printf("Error code was %d\n",errno);
+                printf("Attempted path was %s\n",configFolderLocation);
+            }
+            return -2;
+        }
 
+    }
+    else if (!configDir){
+        printf("Error creating folder for storage!\n");
+        return -2;
+    }
     printf("\n IP address of hue:");
     fflush(stdout);
     fflush(stdin);
     fgets(ipAddress, 50, stdin);
     printf("\n");
     strtok(ipAddress, "\n");
-    obtainAuthToken(ipAddress, authToken);
+    obtainAuthToken(ipAddress, authToken,args);
     //So authtoken is saved
     FILE *newConfigFile = fopen(configFileLocation, "w");
     fprintf(newConfigFile, "ip=%s\nauthToken=%s\n", ipAddress, authToken);
